@@ -95,55 +95,57 @@ async def on_message(message):
     if not should_reply:
         return
 
-    profile = get_profile(message.author.id)
+profile = get_profile(message.author.id)
 
-    profile["trust"] += 1
+user_id = str(message.author.id)
 
-    messages = [user_id].append(
-        {
-            "role": "user",
-            "content": message.content
-        }
-    )
-    messages = [
-        {
-            "role": "system",
-            "content": build_prompt(
-                message.author.id,
-                message.content
-            )
-        }
-    ]
+profile["trust"] += 1
+
+history[user_id].append(
+    {
+        "role": "user",
+        "content": message.content
+    }
+)
+
+messages = [
+    {
+        "role": "system",
+        "content": build_prompt(
+            message.author.id,
+            message.content
+        )
+    }
+]
+
 messages.extend(
     history[user_id][-MAX_HISTORY:]
 )
-    async with message.channel.typing():
 
-        try:
+async with message.channel.typing():
 
-            reply = await asyncio.to_thread(
-                ask_groq,
-                messages
-            )
+    try:
 
-            history[user_id].append(
-               {
-                    "role": "assistant",
-                    "content": reply
-               }
-            )
+        reply = await asyncio.to_thread(
+            ask_groq,
+            messages
+        )
 
-            await message.channel.send(reply)
+        history[user_id].append(
+            {
+                "role": "assistant",
+                "content": reply
+            }
+        )
 
-            save_memory()
+        await message.channel.send(reply)
 
-        except Exception as e:
+        save_memory()
 
-            print(e)
+    except Exception as e:
 
-            await message.channel.send(
-                "something broke 😭"
-            )
+        print(e)
 
-
-client.run(TOKEN)
+        await message.channel.send(
+            "something broke 😭"
+        )
