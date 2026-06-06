@@ -63,8 +63,11 @@ Known notes:
 Conversation history:
 {history_text}
 
-Reply naturally.
-Keep replies short.
+IMPORTANT:
+- Reply in the user's language.
+- Keep replies short.
+- Usually 1-3 sentences.
+- Sound like a real online friend.
 """
 
 def ask_groq(messages):
@@ -77,7 +80,7 @@ def ask_groq(messages):
         json={
             "model": "llama-3.3-70b-versatile",
             "messages": messages,
-            "temperature": 0.9,
+            "temperature": 0.5,
             "max_tokens": 120
         },
         timeout=30
