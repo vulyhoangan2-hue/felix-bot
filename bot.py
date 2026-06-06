@@ -18,9 +18,6 @@ MEMORY_FILE = Path("memory.json")
 TOKEN = os.getenv("TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-if not TOKEN:
-    raise ValueError("DISCORD_TOKEN environment variable not set. Please set it before running the bot.")
-
 client = discord.Client(intents=discord.Intents.default())
 client.intents.message_content = True
 
