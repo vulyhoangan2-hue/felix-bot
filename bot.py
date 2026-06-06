@@ -23,7 +23,7 @@ from vn_normalizer import normalize
 # ─────────────────────────────────────────
 TOKEN        = os.getenv("TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-MODEL        = "llama-3.3-70b-versatile"   # upgraded from 8b
+MODEL        = "llama-3.1-8b-instant"   
 MAX_HISTORY  = 40                           # shared group history
 COOLDOWN     = 3                            # seconds between responses per user
 CHANNEL_NAME = "chat-with-felix"
