@@ -7,11 +7,14 @@ from pathlib import Path
 
 from personality import FELIX_PROMPT
 from language import detect_language
+from memory import (
+    load_memory,
+    save_memory,
+    get_profile
+)
 
-# Environment variables
 TOKEN = os.getenv("TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-MEMORY_FILE = Path("memory.json")
 
 # Initialize Discord client
 intents = discord.Intents.default()
