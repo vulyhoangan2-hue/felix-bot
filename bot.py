@@ -41,11 +41,10 @@ def get_profile(user_id, memory):
         }
     return memory[str(user_id)]
 
-# Build prompt with conversation history
+# Build prompt with recent conversation history
 def build_prompt(user_id, message_content, memory):
     profile = get_profile(user_id, memory)
     language = detect_language(message_content)
-
     # Limit history to last 5 exchanges
     recent_history = profile.get("history", [])[-5:]
     history_text = ""
@@ -53,7 +52,7 @@ def build_prompt(user_id, message_content, memory):
         role = "User" if msg['role'] == 'user' else 'Felix'
         history_text += f"{role}: {msg['content']}\n"
 
-    prompt = f"""
+    return f"""
 {FELIX_PROMPT}
 
 Current language: {language}
@@ -69,9 +68,8 @@ Conversation history:
 Reply naturally.
 Keep replies short.
 """
-    return prompt
 
-# Send request to GROQ API
+# Ask GROQ API
 def ask_groq(messages):
     response = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -119,7 +117,7 @@ async def on_message(message):
     # Append user message to history
     profile["history"].append({"role": "user", "content": message.content})
 
-    # Build prompt with conversation history
+    # Build prompt with history
     prompt = build_prompt(user_id, message.content, memory)
 
     messages = [
@@ -127,20 +125,18 @@ async def on_message(message):
         {"role": "user", "content": message.content}
     ]
 
-    async with message.channel.typing():
-        try:
-            reply = await asyncio.to_thread(ask_groq, messages)
-            await message.channel.send(reply)
+    try:
+        reply = await asyncio.to_thread(ask_groq, messages)
+        await message.channel.send(reply)
+        # Append assistant reply to history
+        profile["history"].append({"role": "assistant", "content": reply})
 
-            # Append assistant reply to history
-            profile["history"].append({"role": "assistant", "content": reply})
+        # Save memory after each interaction
+        save_memory(memory)
 
-            # Save updated memory
-            save_memory(memory)
-
-        except Exception as e:
-            print(e)
-            await message.channel.send("Something broke 😭")
+    except Exception as e:
+        print(e)
+        await message.channel.send("Something broke 😭")
 
 # Run the bot
 client.run(TOKEN)
