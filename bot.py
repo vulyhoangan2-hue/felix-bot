@@ -9,22 +9,15 @@ import requests
 from personality import FELIX_PROMPT
 from language import detect_language
 from memory import load_memory, save_memory, get_profile
-
-# -------------------------
-# CONFIG
-# -------------------------
+from memory import memory  # IMPORTANT
 
 TOKEN = os.getenv("TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-MODEL = "llama-3.1-8b-instant"  # faster + fewer 429 errors
+MODEL = "llama-3.1-8b-instant"
 
 MAX_HISTORY = 12
-COOLDOWN_SECONDS = 5
-
-# -------------------------
-# DISCORD SETUP
-# -------------------------
+COOLDOWN_SECONDS = 4
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -37,30 +30,64 @@ global_lock = asyncio.Lock()
 
 
 # -------------------------
-# MEMORY HELPERS
+# STYLE DETECTOR
 # -------------------------
 
-def trim_history(user_id):
-    if len(history[user_id]) > MAX_HISTORY:
-        history[user_id] = history[user_id][-MAX_HISTORY:]
+def detect_vn_style(text):
+    text = text.lower()
 
+    chill = ["vc", "vl", "haha", "kk", "gòi", "okie", "ừa", "ừ", "nè", "=))", "điên"]
+    formal = ["xin lỗi", "tôi", "vui lòng", "có thể", "xin phép"]
+
+    chill_score = sum(1 for w in chill if w in text)
+    formal_score = sum(1 for w in formal if w in text)
+
+    if chill_score >= 2:
+        return "chill"
+    if formal_score >= 2:
+        return "formal"
+    return "mix"
+
+
+# -------------------------
+# MESSAGE BUILDER
+# -------------------------
 
 def build_messages(user_id, user_text):
     profile = get_profile(user_id)
     language = detect_language(user_text)
+
+    vn_style = profile.get("vn_style", "mix")
+    slang_level = profile.get("slang_level", 1)
+
+    style_map = {
+        "chill": "Very casual Vietnamese Discord friend style.",
+        "formal": "Polite and structured Vietnamese.",
+        "mix": "Balanced casual-neutral Vietnamese.",
+    }
+
+    slang_map = {
+        0: "No slang. Clean Vietnamese.",
+        1: "Light slang allowed (okie, gòi, nè).",
+        2: "Heavy Gen Z slang allowed (vc, vl, =)).",
+    }
 
     system_prompt = f"""
 {FELIX_PROMPT}
 
 USER INFO:
 - Language: {language}
-- Trust level: {profile.get("trust", 0)}
-- Notes: {profile.get("notes", "")}
+- Trust: {profile.get("trust", 0)}
+
+VIETNAMESE MODE:
+- Style: {style_map[vn_style]}
+- Slang: {slang_map[slang_level]}
+- Mirror user tone naturally
 
 RULES:
 - Reply like a Discord friend
-- Keep it 1–3 sentences
-- Be natural, not robotic
+- 1–3 sentences max
+- Never sound like a bot
 """
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -71,13 +98,13 @@ RULES:
 
 
 # -------------------------
-# GROQ CALL (SAFE + RETRY)
+# GROQ CALL
 # -------------------------
 
 def ask_groq(messages, retries=3):
     for i in range(retries):
         try:
-            response = requests.post(
+            res = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -86,25 +113,24 @@ def ask_groq(messages, retries=3):
                 json={
                     "model": MODEL,
                     "messages": messages,
-                    "temperature": 0.85,
+                    "temperature": 0.7,
                     "max_tokens": 120,
                 },
                 timeout=30,
             )
 
-            # Handle rate limit
-            if response.status_code == 429:
+            if res.status_code == 429:
                 time.sleep(2 ** i)
                 continue
 
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            res.raise_for_status()
+            return res.json()["choices"][0]["message"]["content"]
 
         except Exception as e:
-            print(f"[Groq Error Attempt {i+1}]:", e)
+            print("Groq error:", e)
             time.sleep(1)
 
-    return "I'm a bit busy right now 😵 try again in a moment."
+    return "mình hơi lag xíu 😵 thử lại sau nha"
 
 
 # -------------------------
@@ -134,7 +160,7 @@ async def on_message(message):
     now = time.time()
 
     # -------------------------
-    # COOLDOWN (ANTI-SPAM)
+    # COOLDOWN
     # -------------------------
     if user_id in cooldowns:
         if now - cooldowns[user_id] < COOLDOWN_SECONDS:
@@ -143,38 +169,49 @@ async def on_message(message):
     cooldowns[user_id] = now
 
     profile = get_profile(user_id)
-    profile["trust"] = min(profile.get("trust", 0) + 1, 100)
-
-    user_text = message.content
 
     # -------------------------
-    # STORE USER MESSAGE
+    # AUTO STYLE UPDATE
+    # -------------------------
+    detected = detect_vn_style(message.content)
+
+    if profile["vn_style"] == "auto":
+        profile["vn_style"] = detected
+    else:
+        if detected == "chill":
+            profile["slang_level"] = min(profile.get("slang_level", 1) + 1, 2)
+        elif detected == "formal":
+            profile["slang_level"] = max(profile.get("slang_level", 1) - 1, 0)
+
+    profile["trust"] = min(profile.get("trust", 0) + 1, 100)
+
+    # -------------------------
+    # HISTORY
     # -------------------------
     history[user_id].append({
         "role": "user",
-        "content": user_text
+        "content": message.content
     })
 
-    trim_history(user_id)
+    if len(history[user_id]) > MAX_HISTORY:
+        history[user_id] = history[user_id][-MAX_HISTORY:]
 
-    messages = build_messages(user_id, user_text)
+    messages = build_messages(user_id, message.content)
 
     # -------------------------
-    # GLOBAL LOCK (PREVENT BURSTS)
+    # REQUEST
     # -------------------------
     async with message.channel.typing():
         async with global_lock:
             reply = await asyncio.to_thread(ask_groq, messages)
 
-    # -------------------------
-    # STORE ASSISTANT MESSAGE
-    # -------------------------
     history[user_id].append({
         "role": "assistant",
         "content": reply
     })
 
-    trim_history(user_id)
+    if len(history[user_id]) > MAX_HISTORY:
+        history[user_id] = history[user_id][-MAX_HISTORY:]
 
     await message.channel.send(reply)
 
