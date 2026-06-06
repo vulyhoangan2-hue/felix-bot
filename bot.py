@@ -10,10 +10,10 @@ from personality import FELIX_PROMPT
 from language import detect_language
 from memory import load_memory, save_memory, get_profile
 
-from cognitive.intent import detect_intent
-from cognitive.emotion import detect_emotion
-from cognitive.planner import build_plan
-from cognitive.vn_normalizer import normalize
+from intent import detect_intent
+from emotion import detect_emotion
+from planner import build_plan
+from vn_normalizer import normalize
 
 TOKEN = os.getenv("TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
