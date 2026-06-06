@@ -13,15 +13,17 @@ from memory import (
     get_profile
 )
 
+MEMORY_FILE = Path("memory.json")
+
 TOKEN = os.getenv("TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Initialize Discord client
-intents = discord.Intents.default()
-intents.message_content = True
-client = discord.Client(intents=intents)
+if not TOKEN:
+    raise ValueError("DISCORD_TOKEN environment variable not set. Please set it before running the bot.")
 
-# Load memory from JSON file
+client = discord.Client(intents=discord.Intents.default())
+client.intents.message_content = True
+
 def load_memory():
     if MEMORY_FILE.exists():
         with open(MEMORY_FILE, "r") as f:
@@ -29,26 +31,22 @@ def load_memory():
     else:
         return {}
 
-# Save memory to JSON file
 def save_memory(memory):
     with open(MEMORY_FILE, "w") as f:
         json.dump(memory, f, indent=4)
 
-# Get user profile
 def get_profile(user_id, memory):
     if str(user_id) not in memory:
         memory[str(user_id)] = {
             "trust": 0,
             "notes": "",
-            "history": []  # conversation history
+            "history": []
         }
     return memory[str(user_id)]
 
-# Build prompt with recent conversation history
 def build_prompt(user_id, message_content, memory):
     profile = get_profile(user_id, memory)
     language = detect_language(message_content)
-    # Limit history to last 5 exchanges
     recent_history = profile.get("history", [])[-5:]
     history_text = ""
     for msg in recent_history:
@@ -72,7 +70,6 @@ Reply naturally.
 Keep replies short.
 """
 
-# Ask GROQ API
 def ask_groq(messages):
     response = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -116,11 +113,8 @@ async def on_message(message):
     user_id = message.author.id
     profile = get_profile(user_id, memory)
     profile["trust"] += 1
-
-    # Append user message to history
     profile["history"].append({"role": "user", "content": message.content})
 
-    # Build prompt with history
     prompt = build_prompt(user_id, message.content, memory)
 
     messages = [
@@ -131,15 +125,10 @@ async def on_message(message):
     try:
         reply = await asyncio.to_thread(ask_groq, messages)
         await message.channel.send(reply)
-        # Append assistant reply to history
         profile["history"].append({"role": "assistant", "content": reply})
-
-        # Save memory after each interaction
         save_memory(memory)
-
     except Exception as e:
         print(e)
         await message.channel.send("Something broke 😭")
 
-# Run the bot
 client.run(TOKEN)
