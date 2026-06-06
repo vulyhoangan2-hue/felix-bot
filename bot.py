@@ -221,6 +221,9 @@ async def on_message(message: discord.Message):
     push_to_history("assistant", reply)
 
     # ── Send ──────────────────────────────────
+    import re
+    reply = re.sub(r"^\[.*?\]\s*:\s*", "", reply).strip()
+
     await message.channel.send(reply)
 
     # ── Save memory periodically ──────────────
