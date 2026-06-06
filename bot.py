@@ -19,10 +19,17 @@ intents.message_content = True
 
 client = discord.Client(intents=intents)
 
+from collections import defaultdict
+
+history = defaultdict(list)
+
+MAX_HISTORY = 15
 
 def build_prompt(user_id, message):
 
     profile = get_profile(user_id)
+    
+    user_id = str(message.author.id)
 
     language = detect_language(message)
 
@@ -92,6 +99,12 @@ async def on_message(message):
 
     profile["trust"] += 1
 
+    messages = [user_id].append(
+        {
+            "role": "user",
+            "content": message.content
+        }
+    )
     messages = [
         {
             "role": "system",
@@ -99,13 +112,11 @@ async def on_message(message):
                 message.author.id,
                 message.content
             )
-        },
-        {
-            "role": "user",
-            "content": message.content
         }
     ]
-
+messages.extend(
+    history[user_id][-MAX_HISTORY:]
+)
     async with message.channel.typing():
 
         try:
@@ -113,6 +124,13 @@ async def on_message(message):
             reply = await asyncio.to_thread(
                 ask_groq,
                 messages
+            )
+
+            history[user_id].append(
+               {
+                    "role": "assistant",
+                    "content": reply
+               }
             )
 
             await message.channel.send(reply)
