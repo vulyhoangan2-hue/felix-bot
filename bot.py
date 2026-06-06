@@ -9,7 +9,11 @@ import requests
 from personality import FELIX_PROMPT
 from language import detect_language
 from memory import load_memory, save_memory, get_profile
-from memory import memory  # IMPORTANT
+
+from cognitive.intent import detect_intent
+from cognitive.emotion import detect_emotion
+from cognitive.planner import build_plan
+from cognitive.vn_normalizer import normalize
 
 TOKEN = os.getenv("TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -17,7 +21,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL = "llama-3.1-8b-instant"
 
 MAX_HISTORY = 12
-COOLDOWN_SECONDS = 4
+COOLDOWN = 4
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -30,111 +34,69 @@ global_lock = asyncio.Lock()
 
 
 # -------------------------
-# STYLE DETECTOR
+# GROQ
 # -------------------------
 
-def detect_vn_style(text):
-    text = text.lower()
+def ask_groq(messages):
+    res = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": MODEL,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 120,
+        },
+        timeout=30,
+    )
 
-    chill = ["vc", "vl", "haha", "kk", "gòi", "okie", "ừa", "ừ", "nè", "=))", "điên"]
-    formal = ["xin lỗi", "tôi", "vui lòng", "có thể", "xin phép"]
+    if res.status_code == 429:
+        return "slow down a bit 😭"
 
-    chill_score = sum(1 for w in chill if w in text)
-    formal_score = sum(1 for w in formal if w in text)
-
-    if chill_score >= 2:
-        return "chill"
-    if formal_score >= 2:
-        return "formal"
-    return "mix"
+    res.raise_for_status()
+    return res.json()["choices"][0]["message"]["content"]
 
 
 # -------------------------
-# MESSAGE BUILDER
+# PROMPT BUILDER
 # -------------------------
 
-def build_messages(user_id, user_text):
+def build_messages(user_id, raw_text, clean_text, intent, emotion, plan):
     profile = get_profile(user_id)
-    language = detect_language(user_text)
+    language = detect_language(raw_text)
 
-    vn_style = profile.get("vn_style", "mix")
-    slang_level = profile.get("slang_level", 1)
-
-    style_map = {
-        "chill": "Very casual Vietnamese Discord friend style.",
-        "formal": "Polite and structured Vietnamese.",
-        "mix": "Balanced casual-neutral Vietnamese.",
-    }
-
-    slang_map = {
-        0: "No slang. Clean Vietnamese.",
-        1: "Light slang allowed (okie, gòi, nè).",
-        2: "Heavy Gen Z slang allowed (vc, vl, =)).",
-    }
-
-    system_prompt = f"""
+    system = f"""
 {FELIX_PROMPT}
 
-USER INFO:
-- Language: {language}
-- Trust: {profile.get("trust", 0)}
+STATE:
+- Intent: {intent}
+- Emotion: {emotion}
+- Tone: {plan['tone']}
+- Slang: {plan['slang']}
+- Emoji level: {plan['emoji']}
 
-VIETNAMESE MODE:
-- Style: {style_map[vn_style]}
-- Slang: {slang_map[slang_level]}
-- Mirror user tone naturally
+USER:
+- Language: {language}
+- Trust: {profile['trust']}
 
 RULES:
-- Reply like a Discord friend
-- 1–3 sentences max
-- Never sound like a bot
+- 1–3 sentences
+- Natural Discord friend tone
+- Never sound like AI
 """
 
-    messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(history[user_id])
-    messages.append({"role": "user", "content": user_text})
+    msgs = [{"role": "system", "content": system}]
+    msgs.extend(history[user_id])
+    msgs.append({"role": "user", "content": clean_text})
 
-    return messages
-
-
-# -------------------------
-# GROQ CALL
-# -------------------------
-
-def ask_groq(messages, retries=3):
-    for i in range(retries):
-        try:
-            res = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": MODEL,
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": 120,
-                },
-                timeout=30,
-            )
-
-            if res.status_code == 429:
-                time.sleep(2 ** i)
-                continue
-
-            res.raise_for_status()
-            return res.json()["choices"][0]["message"]["content"]
-
-        except Exception as e:
-            print("Groq error:", e)
-            time.sleep(1)
-
-    return "mình hơi lag xíu 😵 thử lại sau nha"
+    return msgs
 
 
 # -------------------------
-# EVENTS
+# BOT EVENTS
 # -------------------------
 
 @client.event
@@ -148,67 +110,49 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    should_reply = (
+    if not (
         message.channel.name == "chat-with-felix"
         or client.user in message.mentions
-    )
-
-    if not should_reply:
+    ):
         return
 
     user_id = str(message.author.id)
     now = time.time()
 
-    # -------------------------
-    # COOLDOWN
-    # -------------------------
-    if user_id in cooldowns:
-        if now - cooldowns[user_id] < COOLDOWN_SECONDS:
-            return
+    if user_id in cooldowns and now - cooldowns[user_id] < COOLDOWN:
+        return
 
     cooldowns[user_id] = now
 
     profile = get_profile(user_id)
 
-    # -------------------------
-    # AUTO STYLE UPDATE
-    # -------------------------
-    detected = detect_vn_style(message.content)
+    raw_text = message.content
+    clean_text = normalize(raw_text)
 
-    if profile["vn_style"] == "auto":
-        profile["vn_style"] = detected
-    else:
-        if detected == "chill":
-            profile["slang_level"] = min(profile.get("slang_level", 1) + 1, 2)
-        elif detected == "formal":
-            profile["slang_level"] = max(profile.get("slang_level", 1) - 1, 0)
+    intent = detect_intent(raw_text)
+    emotion = detect_emotion(raw_text)
+    plan = build_plan(intent, emotion, profile)
 
-    profile["trust"] = min(profile.get("trust", 0) + 1, 100)
+    profile["trust"] = min(profile["trust"] + 1, 100)
 
-    # -------------------------
-    # HISTORY
-    # -------------------------
-    history[user_id].append({
-        "role": "user",
-        "content": message.content
-    })
-
+    history[user_id].append({"role": "user", "content": clean_text})
     if len(history[user_id]) > MAX_HISTORY:
         history[user_id] = history[user_id][-MAX_HISTORY:]
 
-    messages = build_messages(user_id, message.content)
+    messages = build_messages(
+        user_id,
+        raw_text,
+        clean_text,
+        intent,
+        emotion,
+        plan
+    )
 
-    # -------------------------
-    # REQUEST
-    # -------------------------
     async with message.channel.typing():
         async with global_lock:
             reply = await asyncio.to_thread(ask_groq, messages)
 
-    history[user_id].append({
-        "role": "assistant",
-        "content": reply
-    })
+    history[user_id].append({"role": "assistant", "content": reply})
 
     if len(history[user_id]) > MAX_HISTORY:
         history[user_id] = history[user_id][-MAX_HISTORY:]
