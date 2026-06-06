@@ -19,17 +19,10 @@ intents.message_content = True
 
 client = discord.Client(intents=intents)
 
-from collections import defaultdict
-
-history = defaultdict(list)
-
-MAX_HISTORY = 15
 
 def build_prompt(user_id, message):
 
     profile = get_profile(user_id)
-    
-    user_id = str(message.author.id)
 
     language = detect_language(message)
 
@@ -95,57 +88,44 @@ async def on_message(message):
     if not should_reply:
         return
 
-profile = get_profile(message.author.id)
+    profile = get_profile(message.author.id)
 
-user_id = str(message.author.id)
+    profile["trust"] += 1
 
-profile["trust"] += 1
+    messages = [
+        {
+            "role": "system",
+            "content": build_prompt(
+                message.author.id,
+                message.content
+            )
+        },
+        {
+            "role": "user",
+            "content": message.content
+        }
+    ]
 
-history[user_id].append(
-    {
-        "role": "user",
-        "content": message.content
-    }
-)
+    async with message.channel.typing():
 
-messages = [
-    {
-        "role": "system",
-        "content": build_prompt(
-            message.author.id,
-            message.content
-        )
-    }
-]
+        try:
 
-messages.extend(
-    history[user_id][-MAX_HISTORY:]
-)
+            reply = await asyncio.to_thread(
+                ask_groq,
+                messages
+            )
 
-async with message.channel.typing():
+            await message.channel.send(reply)
 
-    try:
+            save_memory()
 
-        reply = await asyncio.to_thread(
-            ask_groq,
-            messages
-        )
+        except Exception as e:
 
-        history[user_id].append(
-            {
-                "role": "assistant",
-                "content": reply
-            }
-        )
+            print(e)
 
-        await message.channel.send(reply)
+            await message.channel.send(
+                "something broke 😭"
+            )
 
-        save_memory()
 
-    except Exception as e:
-
-        print(e)
-
-        await message.channel.send(
-            "something broke 😭"
-        )
+client.run(TOKEN)
