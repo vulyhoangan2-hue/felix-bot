@@ -14,91 +14,110 @@ import re
 # "proper" Vietnamese — just clear meaning.
 # ─────────────────────────────────────────────────────────────────
 VN_MAP = {
-    # Swear-adjacent / emphasis
-    "vc":   "vãi",
-    "vl":   "vãi (rất mạnh)",
-    "vcl":  "vãi cả (rất mạnh)",
-    "cc":   "con c** (chửi)",
-    "dm":   "đ** mẹ (chửi)",
-    "clm":  "c*c lồn má (chửi)",
-
-    # Negation / agreement shortcuts
+    # Negation
     "k":    "không",
     "ko":   "không",
     "kh":   "không",
+    "khg":  "không",
     "kp":   "không phải",
     "kbt":  "không biết",
-    "cx":   "cũng",
-    "cg":   "cũng",
+    "đbt":  "không biết",
 
     # Done / completed
     "r":    "rồi",
-    "roi":  "rồi",
+    "rr":   "rồi",
     "xr":   "xong rồi",
-
-    # Okay / normal
-    "oke":  "okay",
-    "okie": "okay",
-    "ok":   "okay",
-    "bt":   "bình thường",
-    "bth":  "bình thường",
 
     # Can / possible
     "dc":   "được",
     "đc":   "được",
     "dk":   "được",
 
-    # Messaging / action
-    "ib":   "inbox (nhắn tin riêng)",
-    "rep":  "reply (trả lời)",
-    "tag":  "tag (đề cập)",
-    "cm":   "comment (bình luận)",
+    # Also / too
+    "cx":   "cũng",
+    "cg":   "cũng",
 
-    # Feelings
-    "tbt":  "thật buồn thật",
-    "buon": "buồn",
-    "chan": "chán",
-    "met":  "mệt",
+    # With
+    "vs":   "với",
 
-    # Filler / connector
+    # Now / time
+    "h":    "giờ",
+    "bh":   "bây giờ",
+    "trc":  "trước",
+
+    # People / pronouns
+    "mk":   "mình",
+    "mik":  "mình",
+    "mn":   "mọi người",
+    "ngta": "người ta",
+    "tui":  "tôi",
+
+    # What / how
+    "j":    "gì",
+    "v":    "vậy",
+    "z":    "vậy",
+    "vz":   "vậy",
+    "ntn":  "như thế nào",
+    "nt":   "như thế",
+
+    # But
     "nma":  "nhưng mà",
-    "mà":   "mà (nhưng/thì)",
-    "thôi": "thôi (kết thúc/chấp nhận)",
-    "hên xui": "may rủi",
-    "kiểu": "kiểu như (kind of)",
-    "kieu": "kiểu như (kind of)",
-    "vậy":  "vậy (like that / so)",
+    "nhma": "nhưng mà",
 
-    # Time
-    "h":    "giờ (now / hour)",
-    "bh":   "bây giờ (right now)",
-    "t":    "tao (I/me - informal)",
-    "m":    "mày (you - informal)",
-    "mk":   "mình (I/me - softer)",
-    "mn":   "mọi người (everyone)",
-    "a":    "anh (older brother/sir)",
-    "c":    "chị (older sister/ma'am)",
-    "e":    "em (younger sibling/self-humble)",
+    # Okay / fine
+    "oke":  "okay",
+    "okie": "okay",
+    "ok":   "okay",
 
-    # Reaction
-    "haha": "haha (cười)",
-    "hehe": "hehe (cười nhẹ)",
-    "hihi": "hihi (cười dễ thương)",
+    # Normal
+    "bt":   "bình thường",
+    "bth":  "bình thường",
+
+    # Messaging
+    "ib":   "inbox (nhắn riêng)",
+    "rep":  "reply (trả lời)",
+
+    # School
+    "sv":   "sinh viên",
+    "btvn": "bài tập về nhà",
+    "gv":   "giáo viên",
+    "hs":   "học sinh",
+    "thay": "thầy",
+
+    # Swear/emphasis (normalize for model understanding)
+    "vc":   "vãi",
+    "vl":   "vãi (rất mạnh)",
+    "vcl":  "vãi cả (rất mạnh)",
+    "dm":   "chửi thề nhẹ",
+    "đm":   "chửi thề nhẹ",
 }
 
-# Phrases that appear as multi-word (check before single-word split)
 VN_PHRASE_MAP = {
     "hên xui":      "may rủi (hit or miss)",
-    "chill thôi":   "bình tĩnh thôi (just chill)",
-    "thôi kệ":      "kệ nó (forget it)",
+    "chill thôi":   "bình tĩnh thôi",
+    "thôi kệ":      "kệ nó đi",
+    "kệ đi":        "forget it",
     "oke bro":      "okay bro",
-    "đúng r":       "đúng rồi (yeah exactly)",
-    "ừ r":          "ừ rồi (yeah already)",
-    "out r":        "xong rồi / thoát rồi",
-    "vào r":        "vào rồi (already in)",
-    "biết r":       "biết rồi (I know already)",
-    "no cap":       "thật sự (no cap)",
-    "fr fr":        "thật sự (for real)",
+    "đúng r":       "đúng rồi",
+    "ừ r":          "ừ rồi",
+    "biết r":       "biết rồi",
+    "hiểu r":       "hiểu rồi",
+    "xong r":       "xong rồi",
+    "out r":        "ra ngoài rồi / thoát rồi",
+    "vào r":        "vào rồi",
+    "no cap":       "thật sự",
+    "fr fr":        "thật sự",
+    "thật á":       "thật sao / really",
+    "vậy á":        "oh vậy sao",
+    "vậy hả":       "oh vậy sao",
+    "thôi thì":     "well then / vậy thì",
+    "từ từ đã":     "hold on / chờ chút",
+    "tùy thôi":     "up to you / tùy",
+    "chắc vậy":     "probably / I guess",
+    "nma thôi":     "nhưng thôi / but forget it",
+    "ừ mà thôi":    "yeah but whatever",
+    "kiểu kiểu":    "kinda sorta / đại loại vậy",
+    "cũng được":    "that works / okay sure",
 }
 
 
