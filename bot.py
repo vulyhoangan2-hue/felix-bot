@@ -23,9 +23,20 @@ from vn_normalizer import normalize
 # ─────────────────────────────────────────
 TOKEN        = os.getenv("TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-MODEL        = "llama-3.1-8b-instant"   
-MAX_HISTORY  = 40                           # shared group history
-COOLDOWN     = 3                            # seconds between responses per user
+
+# ── Dual-model strategy ───────────────────────────────────────────
+# FAST  → casual chat, greetings, jokes, quick replies
+# DEEP  → venting, personal sharing, complex questions, Japanese tutoring
+# Both share the same free tier limits, so we use DEEP sparingly.
+MODEL_FAST   = "llama-3.1-8b-instant"           # 840 TPS, very low latency
+MODEL_DEEP   = "deepseek-r1-distill-llama-70b"  # reasoning model, thinks before answering
+
+# Intents that warrant deep thinking
+DEEP_INTENTS  = {"vent", "help_request", "japanese_learning"}
+DEEP_EMOTIONS = {"sad", "nervous", "soft"}
+
+MAX_HISTORY  = 40
+COOLDOWN     = 3
 CHANNEL_NAME = "chat-with-felix"
 
 # ─────────────────────────────────────────
@@ -46,32 +57,69 @@ global_lock = asyncio.Lock()
 # ─────────────────────────────────────────
 # Groq API call
 # ─────────────────────────────────────────
-def ask_groq(messages: list[dict]) -> str:
-    try:
-        res = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": MODEL,
-                "messages": messages,
-                "temperature": 0.82,    # slightly higher = more natural/varied
-                "max_tokens": 300,
-                "top_p": 0.95,
-            },
-            timeout=30,
-        )
-        if res.status_code == 429:
-            return "ahhh wait slow down a sec 😭"
-        res.raise_for_status()
-        return res.json()["choices"][0]["message"]["content"].strip()
-    except requests.exceptions.Timeout:
-        return "omg sorry lagged out for a sec, what were you saying"
-    except Exception as e:
-        print(f"[Groq error] {e}")
-        return "wait something went wrong on my end lol"
+def ask_groq(messages: list[dict], use_deep: bool = False) -> str | None:
+    """
+    Calls Groq with automatic retry on 429.
+    - use_deep=True  → DeepSeek R1 reasoning model (thinks before answering)
+    - use_deep=False → Llama 8B instant (fast casual chat)
+
+    Returns None if all retries fail (caller should stay silent).
+    DeepSeek R1 wraps its reasoning in <think>...</think> tags —
+    we strip those so Felix's reply is clean.
+    """
+    model = MODEL_DEEP if use_deep else MODEL_FAST
+    temperature = 0.6 if use_deep else 0.82   # lower temp for reasoning
+    max_tokens  = 500 if use_deep else 280     # more room to think
+
+    for attempt in range(3):
+        try:
+            res = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "top_p": 0.95,
+                },
+                timeout=40,
+            )
+
+            if res.status_code == 429:
+                # Read Groq's retry-after header — they tell us exactly how long to wait
+                retry_after = float(res.headers.get("retry-after", 5 * (attempt + 1)))
+                wait = min(retry_after, 15)   # cap at 15s so we don't freeze too long
+                print(f"[Rate limit] model={model} attempt={attempt+1} waiting {wait:.1f}s")
+                time.sleep(wait)
+                continue
+
+            res.raise_for_status()
+            raw = res.json()["choices"][0]["message"]["content"].strip()
+
+            # Strip DeepSeek R1's <think>...</think> reasoning block
+            # We want Felix's final answer, not the internal monologue
+            import re as _re
+            clean = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
+
+            # Also strip any accidental [felix]: prefix
+            clean = _re.sub(r"^\[.*?\]\s*:\s*", "", clean).strip()
+
+            return clean if clean else raw
+
+        except requests.exceptions.Timeout:
+            print(f"[Timeout] attempt {attempt+1}")
+            if attempt == 2:
+                return "omg sorry lagged out for a sec, what were you saying"
+        except Exception as e:
+            print(f"[Groq error] {e}")
+            if attempt == 2:
+                return "wait something went wrong on my end lol"
+
+    return None  # all retries exhausted — caller stays silent
 
 
 # ─────────────────────────────────────────
@@ -213,17 +261,23 @@ async def on_message(message: discord.Message):
     )
 
     # ── Call Groq ─────────────────────────────
+    # Use the reasoning model for deep emotional/complex moments
+    use_deep = (intent in DEEP_INTENTS) or (emotion in DEEP_EMOTIONS)
+    print(f"[Model] {'DEEP (R1)' if use_deep else 'FAST (8b)'} | intent={intent} emotion={emotion}")
+
     async with message.channel.typing():
         async with global_lock:
-            reply = await asyncio.to_thread(ask_groq, messages)
+            reply = await asyncio.to_thread(ask_groq, messages, use_deep)
+
+    # Silent fail — if all retries exhausted, don't spam an error message
+    if not reply:
+        print("[Silent fail] no reply after retries")
+        return
 
     # ── Log Felix's reply to shared history ───
     push_to_history("assistant", reply)
 
     # ── Send ──────────────────────────────────
-    import re
-    reply = re.sub(r"^\[.*?\]\s*:\s*", "", reply).strip()
-
     await message.channel.send(reply)
 
     # ── Save memory periodically ──────────────

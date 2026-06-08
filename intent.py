@@ -28,6 +28,17 @@ def detect_intent(text: str) -> str:
     if any(t.startswith(g) or t == g.strip() for g in greeting_triggers):
         return "greeting"
 
+    # ── Japanese learning ──────────────────────
+    jp_learning_triggers = [
+        "日本語", "にほんご", "japanese", "kanji", "hiragana", "katakana",
+        "jlpt", "n5", "n4", "n3", "n2", "n1",
+        "どういう意味", "何て読む", "文法", "conjugat", "て形", "た形",
+        "teach me", "how do you say", "what does", "translate",
+        "これは何", "意味は", "使い方",
+    ]
+    if any(x in t for x in jp_learning_triggers):
+        return "japanese_learning"
+
     # ── Help / Explanation request ─────────────
     help_triggers = [
         "help", "how do", "how to", "can you explain", "what is", "what does",
@@ -63,14 +74,28 @@ def detect_intent(text: str) -> str:
 
     # ── Vent / Rant ────────────────────────────
     vent_triggers = [
-        "i hate", "i can't", "this is so", "so tired", "i'm done",
-        "ugh", "why is everything", "i want to cry",
+        "i hate", "i can't", "this is so", "so tired", "i'm done", "im done",
+        "ugh", "why is everything", "i want to cry", "i feel so", "i've been",
+        "so alone", "lonely", "nobody", "no one", "i don't know what",
+        "i just feel", "it's been hard", "been struggling", "can't stop",
         "vcl", "vl", "bực", "chán", "mệt", "stress", "tức", "ghét",
         "짜증", "힘들", "지겨워", "싫어",
         "つかれた", "もう嫌", "最悪",
     ]
     if len(t) > 100 or any(x in t for x in vent_triggers):
         return "vent"
+
+    # ── Joke / Troll ──────────────────────────
+    # (checked after vent so "vcl" in an emotional context hits vent first)
+    joke_triggers = [
+        "lmao", "lmfao", "💀", "hahaha", "hehehehe", "kkkk", "kkkkk",
+        "😂", "🤣", "bruh", "bro what", "no way",
+        "=))", "haha", "hihi", "hehe",
+        "ㅋㅋㅋ", "ㅋㅋㅋㅋ",
+        "www", "草",
+    ]
+    if any(x in t for x in joke_triggers):
+        return "joke"
 
     # ── Compliment ────────────────────────────
     compliment_triggers = [
@@ -82,17 +107,6 @@ def detect_intent(text: str) -> str:
     ]
     if any(x in t for x in compliment_triggers):
         return "compliment"
-
-    # ── Joke / Troll ──────────────────────────
-    joke_triggers = [
-        "lmao", "lmfao", "💀", "hahaha", "hehehehe", "kkkk", "kkkkk",
-        "😂", "🤣", "bruh", "bro what", "no way",
-        "=))", "haha", "hihi", "hehe", "vc ", "vl ",
-        "ㅋㅋㅋ", "ㅋㅋㅋㅋ",
-        "www", "草",
-    ]
-    if any(x in t for x in joke_triggers):
-        return "joke"
 
     # ── Question ──────────────────────────────
     if t.endswith("?") or "?" in t:
