@@ -24,18 +24,12 @@ from vn_normalizer import normalize
 TOKEN        = os.getenv("TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# ── Dual-model strategy ───────────────────────────────────────────
-# FAST  → casual chat, greetings, jokes, quick replies
-# DEEP  → venting, personal sharing, complex questions, Japanese tutoring
-# Both share the same free tier limits, so we use DEEP sparingly.
-MODEL_FAST   = "llama-3.1-8b-instant"           # 840 TPS, very low latency
-MODEL_DEEP   = "deepseek-r1-distill-llama-70b"  # reasoning model, thinks before answering
+# Single model — llama-3.3-70b-versatile is the best balance of quality
+# and stability on Groq free tier. Smart enough for emotional + academic
+# conversations, fast enough for group chat.
+MODEL        = "llama-3.3-70b-versatile"
 
-# Intents that warrant deep thinking
-DEEP_INTENTS  = {"vent", "help_request", "japanese_learning"}
-DEEP_EMOTIONS = {"sad", "nervous", "soft"}
-
-MAX_HISTORY  = 40
+MAX_HISTORY  = 20   # reduced: smaller prompt = fewer token limit hits
 COOLDOWN     = 3
 CHANNEL_NAME = "chat-with-felix"
 
@@ -57,20 +51,13 @@ global_lock = asyncio.Lock()
 # ─────────────────────────────────────────
 # Groq API call
 # ─────────────────────────────────────────
-def ask_groq(messages: list[dict], use_deep: bool = False) -> str | None:
+import re as _re
+
+def ask_groq(messages: list[dict]) -> str | None:
     """
     Calls Groq with automatic retry on 429.
-    - use_deep=True  → DeepSeek R1 reasoning model (thinks before answering)
-    - use_deep=False → Llama 8B instant (fast casual chat)
-
-    Returns None if all retries fail (caller should stay silent).
-    DeepSeek R1 wraps its reasoning in <think>...</think> tags —
-    we strip those so Felix's reply is clean.
+    Returns None if all retries fail — caller stays silent (no spam).
     """
-    model = MODEL_DEEP if use_deep else MODEL_FAST
-    temperature = 0.6 if use_deep else 0.82   # lower temp for reasoning
-    max_tokens  = 500 if use_deep else 280     # more room to think
-
     for attempt in range(3):
         try:
             res = requests.post(
@@ -80,46 +67,39 @@ def ask_groq(messages: list[dict], use_deep: bool = False) -> str | None:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": model,
+                    "model": MODEL,
                     "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
+                    "temperature": 0.78,
+                    "max_tokens": 250,
                     "top_p": 0.95,
                 },
-                timeout=40,
+                timeout=30,
             )
 
             if res.status_code == 429:
-                # Read Groq's retry-after header — they tell us exactly how long to wait
                 retry_after = float(res.headers.get("retry-after", 5 * (attempt + 1)))
-                wait = min(retry_after, 15)   # cap at 15s so we don't freeze too long
-                print(f"[Rate limit] model={model} attempt={attempt+1} waiting {wait:.1f}s")
+                wait = min(retry_after, 15)
+                print(f"[Rate limit] attempt={attempt+1} waiting {wait:.1f}s")
                 time.sleep(wait)
                 continue
+
+            if res.status_code == 400:
+                print(f"[Bad request 400] {res.text[:200]}")
+                return None
 
             res.raise_for_status()
             raw = res.json()["choices"][0]["message"]["content"].strip()
 
-            # Strip DeepSeek R1's <think>...</think> reasoning block
-            # We want Felix's final answer, not the internal monologue
-            import re as _re
-            clean = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
-
-            # Also strip any accidental [felix]: prefix
-            clean = _re.sub(r"^\[.*?\]\s*:\s*", "", clean).strip()
-
+            # Strip any accidental [felix]: prefix the model hallucinates
+            clean = _re.sub(r"^\[.*?\]\s*:\s*", "", raw).strip()
             return clean if clean else raw
 
         except requests.exceptions.Timeout:
             print(f"[Timeout] attempt {attempt+1}")
-            if attempt == 2:
-                return "omg sorry lagged out for a sec, what were you saying"
         except Exception as e:
             print(f"[Groq error] {e}")
-            if attempt == 2:
-                return "wait something went wrong on my end lol"
 
-    return None  # all retries exhausted — caller stays silent
+    return None  # silent fail
 
 
 # ─────────────────────────────────────────
@@ -167,13 +147,11 @@ DETECTED STATE:
 
 {memory_block}
 
-REMINDER — READ THIS BEFORE REPLYING:
-- You are Felix. Not an AI. Not a bot. Just Felix, in a group chat.
-- [{display_name}]'s last message was in: {language}. REPLY IN {language.upper()}. Not English. Not Vietnamese. {language}.
-- If their message was short (under 6 words), your reply must also be short. Under 6 words.
-- In Vietnamese: you are "tao", they are "mày". NEVER use "em" to refer to yourself.
-- NEVER start your reply with "[felix]:" or "[Felix]:" or any name tag.
-- Read the room. Check the full chat history above before replying.
+REMINDER:
+- [{display_name}] wrote in {language}. Reply in {language.upper()}. No exceptions.
+- If their message was under 6 words, your reply must also be under 6 words.
+- In Vietnamese: you are "anh", they are "em". Never call yourself "em".
+- Never start reply with [felix]: or any name tag.
 """
 
     msgs = [{"role": "system", "content": system}]
@@ -263,15 +241,11 @@ async def on_message(message: discord.Message):
     )
 
     # ── Call Groq ─────────────────────────────
-    # Use the reasoning model for deep emotional/complex moments
-    use_deep = (intent in DEEP_INTENTS) or (emotion in DEEP_EMOTIONS)
-    print(f"[Model] {'DEEP (R1)' if use_deep else 'FAST (8b)'} | intent={intent} emotion={emotion}")
-
     async with message.channel.typing():
         async with global_lock:
-            reply = await asyncio.to_thread(ask_groq, messages, use_deep)
+            reply = await asyncio.to_thread(ask_groq, messages)
 
-    # Silent fail — if all retries exhausted, don't spam an error message
+    # Silent fail — don't spam errors
     if not reply:
         print("[Silent fail] no reply after retries")
         return
