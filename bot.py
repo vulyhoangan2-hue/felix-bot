@@ -27,7 +27,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # Single model — llama-3.3-70b-versatile is the best balance of quality
 # and stability on Groq free tier. Smart enough for emotional + academic
 # conversations, fast enough for group chat.
-MODEL        = "llama-3.3-70b-versatile"
+MODEL        = "llama-3.1-8b-instant"
 
 MAX_HISTORY  = 20   # reduced: smaller prompt = fewer token limit hits
 COOLDOWN     = 3
